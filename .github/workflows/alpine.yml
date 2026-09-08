@@ -72,5 +72,5 @@ jobs:
             if [ '${{ inputs.verify_source }}' = true ]; then
               go run -a -buildvcs=true ./cmd/secverify test
             else
-              go tool secverify test
+              go -C tools tool secverify --root .. test
             fi

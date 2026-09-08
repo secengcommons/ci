@@ -65,14 +65,14 @@ func TestWorkflowReferenceRegressions(t *testing.T) {
 
 func TestWorkflowsUseRepositoryVerifyTool(t *testing.T) {
 	expected := map[string][]string{
-		"alpine.yml": {"go tool secverify test"},
-		"fuzz.yml":   {"go tool secverify campaign"},
-		"linux.yml":  {"go tool secverify test"},
-		"macos.yml":  {"go tool secverify test"},
-		"verify.yml": {"go tool secverify all"},
+		"alpine.yml": {"go -C tools tool secverify --root .. test"},
+		"fuzz.yml":   {"go -C tools tool secverify --root .. campaign"},
+		"linux.yml":  {"go -C tools tool secverify --root .. test"},
+		"macos.yml":  {"go -C tools tool secverify --root .. test"},
+		"verify.yml": {"go -C tools tool secverify --root .. all"},
 		"windows.yml": {
-			"go tool secverify test",
-			"go tool secverify fuzz-inventory",
+			"go -C tools tool secverify --root .. test",
+			"go -C tools tool secverify --root .. fuzz-inventory",
 		},
 	}
 	for path, commands := range expected {

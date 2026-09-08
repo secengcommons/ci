@@ -71,7 +71,7 @@ jobs:
 
       - name: Fuzz
         if: ${{ !inputs.verify_source }}
-        run: go tool secverify campaign
+        run: go -C tools tool secverify --root .. campaign
 
       - name: Fuzz with Verify source
         if: ${{ inputs.verify_source }}

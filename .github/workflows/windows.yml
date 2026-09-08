@@ -71,7 +71,7 @@ jobs:
 
       - name: Test
         if: ${{ !inputs.verify_source && !matrix.inventory }}
-        run: go tool secverify test
+        run: go -C tools tool secverify --root .. test
 
       - name: Test with Verify source
         if: ${{ inputs.verify_source && !matrix.inventory }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: Inventory fuzz targets
         if: ${{ !inputs.verify_source && matrix.inventory }}
-        run: go tool secverify fuzz-inventory
+        run: go -C tools tool secverify --root .. fuzz-inventory
 
       - name: Inventory fuzz targets with Verify source
         if: ${{ inputs.verify_source && matrix.inventory }}

@@ -72,7 +72,7 @@ jobs:
 
       - name: Test
         if: ${{ !inputs.verify_source }}
-        run: go tool secverify test
+        run: go -C tools tool secverify --root .. test
 
       - name: Test with Verify source
         if: ${{ inputs.verify_source }}

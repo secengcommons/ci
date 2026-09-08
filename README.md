@@ -1,7 +1,7 @@
 ## Setup
-The repository's root Go module owns the exact Verify version:
+The repository's tools module owns the exact Verify version:
 ```sh
-go get -tool github.com/secengcommons/verify/cmd/secverify@VERSION
+go -C tools get -tool github.com/secengcommons/verify/cmd/secverify@VERSION
 ```
 
 ## Use
