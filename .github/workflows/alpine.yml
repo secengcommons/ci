@@ -72,6 +72,6 @@ jobs:
             if [ '${{ inputs.verify_source }}' = true ]; then
               go run -a -buildvcs=true ./cmd/secverify test
             else
-              go install github.com/secengcommons/verify/cmd/secverify@v0.2.1
+              go install github.com/secengcommons/verify/cmd/secverify@v1.0.0-alpha1
               "$(go env GOPATH)/bin/secverify" test
             fi

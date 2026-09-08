@@ -65,7 +65,7 @@ jobs:
 
       - name: Install Verify
         if: ${{ !inputs.verify_source }}
-        run: go install github.com/secengcommons/verify/cmd/secverify@v0.2.1
+        run: go install github.com/secengcommons/verify/cmd/secverify@v1.0.0-alpha1
 
       - name: Verify
         if: ${{ !inputs.verify_source }}
