@@ -59,7 +59,7 @@ jobs:
           readonly temporary="$RUNNER_TEMP/secengcommons-container"
           mkdir -m 0777 "$temporary"
           printf 'FROM %s\nRUN apk add --no-cache gcc git musl-dev\n' "$base" | docker build --tag "$image" -
-          docker run --rm --read-only --cap-drop ALL \
+          docker run --rm --init --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 128 --user 65532:65532 \
             --env GOCACHE=/tmp/go-build --env GOMODCACHE=/tmp/go-mod --env HOME=/tmp/home \
             --mount "type=bind,src=$temporary,dst=/tmp" \
