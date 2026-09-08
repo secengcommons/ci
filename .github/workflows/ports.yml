@@ -1,0 +1,95 @@
+name: Go ports
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+permissions: {}
+
+concurrency:
+  group: go-ports-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  ports:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build targets
+        shell: bash
+        run: |
+          mobile_packages() {
+            python3 - "$1" <<'PY'
+          import json, pathlib, sys
+          source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          decoder = json.JSONDecoder()
+          while source.lstrip():
+              source = source.lstrip()
+              value, end = decoder.raw_decode(source)
+              source = source[end:]
+              if value.get("Name") != "main":
+                  if value.get("Incomplete"):
+                      raise SystemExit(f'incomplete mobile package: {value["ImportPath"]}')
+                  print(value["ImportPath"])
+          PY
+          }
+          inventory="$RUNNER_TEMP/go-targets"
+          go tool dist list >"$inventory"
+          mapfile -t targets <"$inventory"
+          ((${#targets[@]} > 0 && ${#targets[@]} <= 256))
+          completed=0
+          for target in "${targets[@]}"; do
+            IFS=/ read -r target_os target_arch extra <<<"$target"
+            [[ -n "$target_os" && -n "$target_arch" && -z "$extra" ]]
+            if [[ "$target_os" == android || "$target_os" == ios ]]; then
+              packages="$RUNNER_TEMP/mobile-packages"
+              filtered="$RUNNER_TEMP/mobile-packages.filtered"
+              package_inventory="$RUNNER_TEMP/mobile-packages.json"
+              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go list -e -json ./... >"$package_inventory"
+              mobile_packages "$package_inventory" >"$packages"
+              tr -d '\r' <"$packages" >"$filtered"
+              mapfile -t mobile <"$filtered"
+              ((${#mobile[@]} > 0 && ${#mobile[@]} <= 4096))
+              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath "${mobile[@]}"
+            else
+              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath ./...
+            fi
+            completed=$((completed + 1))
+          done
+          ((completed == ${#targets[@]}))

@@ -1,0 +1,83 @@
+name: macOS
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+      verify_source:
+        description: Run Verify from source
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+      verify_source:
+        description: Run Verify from source
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  macos:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: macOS 15 ARM64, runner: macos-15}
+          - {name: macOS 26 ARM64, runner: macos-26}
+          - {name: macOS 15 Intel, runner: macos-15-intel}
+          - {name: macOS 26 Intel, runner: macos-26-intel}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install Verify
+        if: ${{ !inputs.verify_source }}
+        run: go install github.com/secengcommons/verify/cmd/secverify@v0.2.1
+
+      - name: Test
+        if: ${{ !inputs.verify_source }}
+        run: secverify test
+
+      - name: Test with Verify source
+        if: ${{ inputs.verify_source }}
+        run: go run -a -buildvcs=true ./cmd/secverify test

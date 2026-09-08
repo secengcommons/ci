@@ -1,0 +1,140 @@
+name: illumos
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+permissions: {}
+
+concurrency:
+  group: illumos-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  illumos:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: OmniOS r151058 AMD64, system: omnios, version: r151058, architecture: x86-64, goos: illumos, goarch: amd64}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build tests
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shlex, subprocess
+          root = pathlib.Path.cwd().resolve()
+          output = root / ".tests"
+          output.mkdir()
+          binary_limit = 128 * 1024 * 1024
+          bundle_limit = 2 * 1024 * 1024 * 1024
+          package_limit = 512
+          source_limit = 16 * 1024 * 1024
+          process = subprocess.Popen(["go", "list", "-json", "./..."], stdout=subprocess.PIPE, text=True)
+          decoder = json.JSONDecoder()
+          source = process.stdout.read(source_limit + 1)
+          if len(source) > source_limit:
+              process.kill()
+              process.wait()
+              raise SystemExit("go list output exceeds 16 MiB")
+          if process.wait() != 0:
+              raise SystemExit("go list failed")
+          packages = []
+          while source.lstrip():
+              source = source.lstrip()
+              value, end = decoder.raw_decode(source)
+              source = source[end:]
+              if value.get("GoFiles") or value.get("CgoFiles"):
+                  packages.append(value)
+          if not packages or len(packages) > package_limit:
+              raise SystemExit("invalid package inventory")
+          environment = os.environ.copy()
+          environment.update(CGO_ENABLED="0", GOOS=os.environ["TARGET_GOOS"], GOARCH=os.environ["TARGET_GOARCH"])
+          lines = [
+              "#!/bin/sh", "set -eu", "GOTOOLCHAIN=auto; export GOTOOLCHAIN",
+              'PATH="/usr/local/go/bin:/usr/local/bin:/usr/pkg/go/bin:/usr/pkg/bin:/opt/ooce/bin:$PATH"; export PATH',
+              'root=$(CDPATH= cd "$(dirname "$0")/.." && pwd)',
+          ]
+          bundle_bytes = 0
+          for index, package in enumerate(packages):
+              directory = pathlib.Path(package["Dir"]).resolve()
+              relative = directory.relative_to(root)
+              binary = output / f"{index:04d}.test"
+              subprocess.run(["go", "test", "-c", "-trimpath", "-o", str(binary), package["ImportPath"]], cwd=root, env=environment, check=True)
+              binary_bytes = binary.stat().st_size
+              bundle_bytes += binary_bytes
+              if binary_bytes > binary_limit or bundle_bytes > bundle_limit:
+                  raise SystemExit("test bundle exceeds its byte bound")
+              lines.append(f"(cd {shlex.quote(str(relative))} && \"$root/.tests/{binary.name}\" -test.count=1 -test.shuffle=on -test.timeout=10m)")
+          (output / "run").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+          PY
+
+      - name: Start VM
+        uses: cross-platform-actions/action@faa0c6197e94aacf1c5956460152c8380d3560a5 # v1.5.0
+        with:
+          operating_system: ${{ matrix.system }}
+          version: ${{ matrix.version }}
+          architecture: ${{ matrix.architecture }}
+          shell: sh
+          memory: 4G
+          cpu_count: 2
+
+      - name: Install Go and Git
+        shell: cpa.sh {0}
+        run: |
+          pfexec pkg install ooce/developer/go-127 git
+          files=$(pkg contents -H -o path -t file ooce/developer/go-127)
+          executable=$(printf '%s\n' "$files" | awk '/\/bin\/go$/ { print }')
+          [ "$(printf '%s' "$executable" | awk 'END { print NR }')" -eq 1 ]
+          case "$executable" in
+            /*) ;;
+            *) executable="/$executable" ;;
+          esac
+          [ -x "$executable" ]
+          pfexec mkdir -p /usr/local/bin
+          pfexec ln -s "$executable" /usr/local/bin/go
+
+      - name: Test
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: sh ./.tests/run

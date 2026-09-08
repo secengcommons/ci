@@ -1,0 +1,103 @@
+name: CodeQL
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  codeql:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Go, language: go, build_mode: manual}
+          - {name: Actions, language: actions, build_mode: none}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build_mode }}
+          queries: security-extended,security-and-quality
+
+      - name: Build
+        if: matrix.language == 'go'
+        run: go build -trimpath ./...
+
+      - name: Analyse CodeQL
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}
+          output: '${{ runner.temp }}/codeql'
+          upload: never
+
+      - name: Check findings
+        env:
+          RESULT_DIRECTORY: ${{ runner.temp }}/codeql
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          directory = pathlib.Path(os.environ["RESULT_DIRECTORY"])
+          reports = sorted(directory.rglob("*.sarif"))
+          if not reports:
+              raise SystemExit("CodeQL produced no SARIF report")
+          findings = []
+          report_bytes = 0
+          report_limit = 64 * 1024 * 1024
+          for report in reports:
+              report_bytes += report.stat().st_size
+              if report_bytes > report_limit:
+                  raise SystemExit("CodeQL reports exceed 64 MiB")
+              value = json.loads(report.read_text(encoding="utf-8"))
+              for run in value.get("runs", []):
+                  findings.extend(run.get("results", []))
+          if findings:
+              raise SystemExit(f"CodeQL reported {len(findings)} findings")
+          PY

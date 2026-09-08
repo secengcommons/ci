@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  merge_group:
+  schedule:
+    - cron: '0 14 * * 0'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actions:
+    name: GitHub Actions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/go.mod
+          cache: false
+
+      - name: Verify tools module
+        run: |
+          go -C tools mod tidy -diff
+          go -C tools mod verify
+
+      - name: Test tools module
+        run: go -C tools test -count=1 ./...
+
+      - name: Check tool dependencies
+        shell: bash
+        run: |
+          metadata="$RUNNER_TEMP/tool-module.json"
+          tool_paths="$RUNNER_TEMP/tool-paths"
+          raw_tool_paths="$RUNNER_TEMP/tool-paths.raw"
+          module_paths="$RUNNER_TEMP/tool-module-paths"
+          normalised_module_paths="$RUNNER_TEMP/tool-module-paths.normalised"
+          raw_module_paths="$RUNNER_TEMP/tool-module-paths.raw"
+          report="$RUNNER_TEMP/tool-dependencies.json"
+          go -C tools mod edit -json >"$metadata"
+          python3 - "$metadata" >"$raw_tool_paths" <<'PY'
+          import json, pathlib, sys
+          value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          tools = value.get("Tool") or []
+          if not tools or len(tools) > 64:
+              raise SystemExit("invalid tool inventory")
+          for tool in tools:
+              print(tool["Path"])
+          PY
+          tr -d '\r' <"$raw_tool_paths" >"$tool_paths"
+          mapfile -t tools <"$tool_paths"
+          go -C tools list -deps -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}" >"$raw_module_paths"
+          tr -d '\r' <"$raw_module_paths" >"$normalised_module_paths"
+          sort -u "$normalised_module_paths" >"$module_paths"
+          mapfile -t modules <"$module_paths"
+          ((${#modules[@]} > 0 && ${#modules[@]} <= 4096))
+          go -C tools list -m -u -json "${modules[@]}" >"$report"
+          [[ -s "$report" && $(wc -c <"$report") -le $((4 * 1024 * 1024)) ]]
+          python3 - "$report" <<'PY'
+          import json, pathlib, sys
+          source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          decoder = json.JSONDecoder()
+          exclusions = {
+              "go.yaml.in/yaml/v4": ("v4.0.0-rc.6", "Actionlint v1.7.12 requires the rc.3 parser API"),
+          }
+          failures = []
+          used = set()
+          while source.lstrip():
+              source = source.lstrip()
+              value, end = decoder.raw_decode(source)
+              source = source[end:]
+              if value.get("Main"):
+                  continue
+              if value.get("Retracted"):
+                  failures.append(f'{value["Path"]} {value.get("Version", "")} is retracted')
+              update = value.get("Update")
+              if update:
+                  excluded = exclusions.get(value["Path"])
+                  if excluded and update["Version"] == excluded[0]:
+                      used.add(value["Path"])
+                      print(f'exclude {value["Path"]} {update["Version"]}: {excluded[1]}')
+                      continue
+                  failures.append(f'{value["Path"]} {value.get("Version", "")} -> {update["Version"]}')
+          for path in exclusions.keys() - used:
+              failures.append(f"unused dependency exclusion: {path}")
+          if failures:
+              raise SystemExit("\n".join(sorted(failures)))
+          PY
+
+      - name: Check workflows
+        shell: bash
+        run: |
+          found="$RUNNER_TEMP/workflows"
+          inventory="$RUNNER_TEMP/workflows.sorted"
+          find "$GITHUB_WORKSPACE/.github/workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 >"$found"
+          sort -z "$found" >"$inventory"
+          mapfile -d '' -t workflows <"$inventory"
+          ((${#workflows[@]} > 0 && ${#workflows[@]} <= 64))
+          go -C tools tool actionlint -color=false "${workflows[@]}"
+
+      - name: Scan Actionlint dependencies
+        run: go -C tools tool govulncheck github.com/rhysd/actionlint/cmd/actionlint
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: actions
+          build-mode: none
+          queries: security-extended,security-and-quality
+
+      - name: Analyse CodeQL
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:actions
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
+
+  required:
+    name: Required
+    if: ${{ always() }}
+    needs: [actions, codeql]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          if any(value["result"] != "success" for value in results.values()):
+              raise SystemExit(1)
+          PY

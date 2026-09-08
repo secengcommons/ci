@@ -1,0 +1,68 @@
+name: Containers
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+permissions: {}
+
+concurrency:
+  group: containers-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  alpine:
+    name: Go 1.27.1 on Alpine Linux 3.24.1 AMD64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Test
+        shell: bash
+        run: |
+          readonly base='golang@sha256:3f6d04dc61331ee3c2fbbaad62d54412a84680f6a041d269a20a5270a078515b' # 1.27.1-alpine3.24
+          readonly image='secengcommons-ci-go-alpine'
+          readonly temporary="$RUNNER_TEMP/secengcommons-container"
+          mkdir -m 0777 "$temporary"
+          printf 'FROM %s\nRUN apk add --no-cache gcc git musl-dev\n' "$base" | docker build --tag "$image" -
+          docker run --rm --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 --user 65532:65532 \
+            --env GOCACHE=/tmp/go-build --env GOMODCACHE=/tmp/go-mod --env HOME=/tmp/home \
+            --mount "type=bind,src=$temporary,dst=/tmp" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace,readonly" \
+            --workdir /workspace --entrypoint /bin/sh "$image" \
+            -c 'mkdir -p "$HOME" && git config --global --add safe.directory /workspace && exec go test -count=1 -shuffle=on ./...'

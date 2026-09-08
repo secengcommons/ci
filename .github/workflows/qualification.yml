@@ -1,0 +1,152 @@
+name: Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: qualification-${{ github.workflow }}-${{ inputs.repository }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  linux:
+    name: Linux
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  windows:
+    name: Windows
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  macos:
+    name: macOS
+    permissions:
+      contents: read
+    uses: ./.github/workflows/macos.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  fuzz:
+    name: Fuzz
+    permissions:
+      contents: read
+    uses: ./.github/workflows/fuzz.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  ports:
+    name: Go ports
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ports.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  containers:
+    name: Containers
+    permissions:
+      contents: read
+    uses: ./.github/workflows/containers.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  alpine:
+    name: Alpine Linux
+    permissions:
+      contents: read
+    uses: ./.github/workflows/alpine.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  bsd:
+    name: BSD
+    permissions:
+      contents: read
+    uses: ./.github/workflows/bsd.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  illumos:
+    name: illumos
+    permissions:
+      contents: read
+    uses: ./.github/workflows/illumos.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  solaris:
+    name: Solaris
+    permissions:
+      contents: read
+    uses: ./.github/workflows/solaris.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  codeql:
+    name: CodeQL
+    permissions:
+      contents: read
+      security-events: read
+    uses: ./.github/workflows/codeql.yml
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+
+  required:
+    name: Required
+    if: ${{ always() }}
+    needs: [verify, linux, windows, macos, fuzz, ports, containers, alpine, bsd, illumos, solaris, codeql]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          failed = {name: value["result"] for name, value in results.items() if value["result"] != "success"}
+          if failed:
+              for name in sorted(failed):
+                  print(f"{name}: {failed[name]}")
+              raise SystemExit(1)
+          PY

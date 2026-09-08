@@ -1,0 +1,77 @@
+name: Alpine Linux
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Repository to verify
+        required: false
+        type: string
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+      verify_source:
+        description: Run Verify from source
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Public repository to verify
+        required: true
+        type: string
+      ref:
+        description: Git ref to verify
+        required: true
+        type: string
+      verify_source:
+        description: Run Verify from source
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: alpine-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.repository || github.repository }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  alpine:
+    name: Alpine Linux 3.24.1 VM AMD64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Test
+        uses: vmactions/alpine-vm@697847385681cdc413604693010eded91e8d9650 # v1.0.1
+        with:
+          release: '3.24'
+          arch: x86_64
+          sync: tar
+          copyback: false
+          mem: 4096
+          cpu: 2
+          prepare: apk add --no-cache gcc git go musl-dev
+          run: |
+            export CGO_ENABLED=1 GOWORK=off
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            if [ '${{ inputs.verify_source }}' = true ]; then
+              go run -a -buildvcs=true ./cmd/secverify test
+            else
+              go install github.com/secengcommons/verify/cmd/secverify@v0.2.1
+              "$(go env GOPATH)/bin/secverify" test
+            fi
