@@ -63,13 +63,9 @@ jobs:
           cache: true
           cache-dependency-path: '**/go.sum'
 
-      - name: Install Verify
-        if: ${{ !inputs.verify_source }}
-        run: go install github.com/secengcommons/verify/cmd/secverify@v1.0.0-alpha1
-
       - name: Verify
         if: ${{ !inputs.verify_source }}
-        run: secverify all
+        run: go tool secverify all
 
       - name: Verify from source
         if: ${{ inputs.verify_source }}

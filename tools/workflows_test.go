@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -59,6 +60,38 @@ func TestWorkflowReferenceRegressions(t *testing.T) {
 				t.Fatal("invalid workflow reference was accepted")
 			}
 		})
+	}
+}
+
+func TestWorkflowsUseRepositoryVerifyTool(t *testing.T) {
+	expected := map[string][]string{
+		"alpine.yml": {"go tool secverify test"},
+		"fuzz.yml":   {"go tool secverify campaign"},
+		"linux.yml":  {"go tool secverify test"},
+		"macos.yml":  {"go tool secverify test"},
+		"verify.yml": {"go tool secverify all"},
+		"windows.yml": {
+			"go tool secverify test",
+			"go tool secverify fuzz-inventory",
+		},
+	}
+	for path, commands := range expected {
+		source, err := os.ReadFile(filepath.Join("..", ".github", "workflows", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(source, []byte("go install github.com/secengcommons/verify")) ||
+			bytes.Contains(source, []byte("run: secverify")) || bytes.Contains(source, []byte("/bin/secverify")) {
+			t.Fatalf("%s uses an external Verify executable", path)
+		}
+		for _, command := range commands {
+			if bytes.Count(source, []byte(command)) != 1 {
+				t.Fatalf("%s does not own exactly one %q command", path, command)
+			}
+		}
+		if !bytes.Contains(source, []byte("go run -a -buildvcs=true ./cmd/secverify")) {
+			t.Fatalf("%s does not retain Verify source bootstrap", path)
+		}
 	}
 }
 

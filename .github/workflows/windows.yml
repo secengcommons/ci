@@ -69,13 +69,9 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Install Verify
-        if: ${{ !inputs.verify_source }}
-        run: go install github.com/secengcommons/verify/cmd/secverify@v1.0.0-alpha1
-
       - name: Test
         if: ${{ !inputs.verify_source && !matrix.inventory }}
-        run: secverify test
+        run: go tool secverify test
 
       - name: Test with Verify source
         if: ${{ inputs.verify_source && !matrix.inventory }}
@@ -83,7 +79,7 @@ jobs:
 
       - name: Inventory fuzz targets
         if: ${{ !inputs.verify_source && matrix.inventory }}
-        run: secverify fuzz-inventory
+        run: go tool secverify fuzz-inventory
 
       - name: Inventory fuzz targets with Verify source
         if: ${{ inputs.verify_source && matrix.inventory }}

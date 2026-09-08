@@ -1,3 +1,9 @@
+## Setup
+The repository's root Go module owns the exact Verify version:
+```sh
+go get -tool github.com/secengcommons/verify/cmd/secverify@VERSION
+```
+
 ## Use
 ```yaml
 jobs:
@@ -19,7 +25,7 @@ fuzz.yml | Linux, Windows and macOS fuzz campaigns
 ports.yml | Portable root-module packages across every target reported by the selected Go toolchain
 containers.yml | Root-module tests in a restricted Alpine Linux container
 alpine.yml | Repository tests in an Alpine Linux virtual machine
-bsd.yml | Root-module tests on FreeBSD, OpenBSD, NetBSD and DragonFly BSD
+bsd.yml | Root-module tests on FreeBSD, OpenBSD and NetBSD
 illumos.yml | Root-module tests on OmniOS
 solaris.yml | Root-module tests on Oracle Solaris
 dependencies.yml | Pull-request dependency review

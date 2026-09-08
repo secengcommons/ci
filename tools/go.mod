@@ -8,7 +8,7 @@ tool (
 	golang.org/x/vuln/cmd/govulncheck
 )
 
-require github.com/secengcommons/verify v0.1.1
+require github.com/secengcommons/verify v1.0.0-alpha1
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
