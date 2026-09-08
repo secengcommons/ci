@@ -54,18 +54,21 @@ jobs:
       - name: Build targets
         shell: bash
         run: |
-          mobile_packages() {
-            python3 - "$1" <<'PY'
+          buildable_packages() {
+            python3 - "$1" "$2" <<'PY'
           import json, pathlib, sys
           source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          exclude_commands = sys.argv[2] == "mobile"
           decoder = json.JSONDecoder()
           while source.lstrip():
               source = source.lstrip()
               value, end = decoder.raw_decode(source)
               source = source[end:]
-              if value.get("Name") != "main":
-                  if value.get("Incomplete"):
-                      raise SystemExit(f'incomplete mobile package: {value["ImportPath"]}')
+              if not value.get("GoFiles"):
+                  continue
+              if value.get("Incomplete"):
+                  raise SystemExit(f'incomplete package: {value["ImportPath"]}')
+              if not exclude_commands or value.get("Name") != "main":
                   print(value["ImportPath"])
           PY
           }
@@ -77,19 +80,19 @@ jobs:
           for target in "${targets[@]}"; do
             IFS=/ read -r target_os target_arch extra <<<"$target"
             [[ -n "$target_os" && -n "$target_arch" && -z "$extra" ]]
+            packages="$RUNNER_TEMP/buildable-packages"
+            filtered="$RUNNER_TEMP/buildable-packages.filtered"
+            package_inventory="$RUNNER_TEMP/buildable-packages.json"
+            mode=all
             if [[ "$target_os" == android || "$target_os" == ios ]]; then
-              packages="$RUNNER_TEMP/mobile-packages"
-              filtered="$RUNNER_TEMP/mobile-packages.filtered"
-              package_inventory="$RUNNER_TEMP/mobile-packages.json"
-              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go list -e -json ./... >"$package_inventory"
-              mobile_packages "$package_inventory" >"$packages"
-              tr -d '\r' <"$packages" >"$filtered"
-              mapfile -t mobile <"$filtered"
-              ((${#mobile[@]} > 0 && ${#mobile[@]} <= 4096))
-              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath "${mobile[@]}"
-            else
-              env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath ./...
+              mode=mobile
             fi
+            env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go list -e -json ./... >"$package_inventory"
+            buildable_packages "$package_inventory" "$mode" >"$packages"
+            tr -d '\r' <"$packages" >"$filtered"
+            mapfile -t buildable <"$filtered"
+            ((${#buildable[@]} > 0 && ${#buildable[@]} <= 4096))
+            env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath "${buildable[@]}"
             completed=$((completed + 1))
           done
           ((completed == ${#targets[@]}))
