@@ -55,10 +55,11 @@ jobs:
         shell: bash
         run: |
           buildable_packages() {
-            python3 - "$1" "$2" <<'PY'
+            python3 - "$1" "$2" "$3" <<'PY'
           import json, pathlib, sys
           source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
           exclude_commands = sys.argv[2] == "mobile"
+          target = sys.argv[3]
           decoder = json.JSONDecoder()
           while source.lstrip():
               source = source.lstrip()
@@ -66,10 +67,11 @@ jobs:
               source = source[end:]
               if not value.get("GoFiles"):
                   continue
+              if exclude_commands and value.get("Name") == "main":
+                  continue
               if value.get("Incomplete"):
-                  raise SystemExit(f'incomplete package: {value["ImportPath"]}')
-              if not exclude_commands or value.get("Name") != "main":
-                  print(value["ImportPath"])
+                  raise SystemExit(f'incomplete package for {target}: {value["ImportPath"]}')
+              print(value["ImportPath"])
           PY
           }
           inventory="$RUNNER_TEMP/go-targets"
@@ -88,7 +90,7 @@ jobs:
               mode=mobile
             fi
             env CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go list -e -json ./... >"$package_inventory"
-            buildable_packages "$package_inventory" "$mode" >"$packages"
+            buildable_packages "$package_inventory" "$mode" "$target" >"$packages"
             tr -d '\r' <"$packages" >"$filtered"
             mapfile -t buildable <"$filtered"
             ((${#buildable[@]} > 0 && ${#buildable[@]} <= 4096))
