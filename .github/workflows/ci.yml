@@ -39,6 +39,8 @@ jobs:
         run: |
           go -C tools mod tidy -diff
           go -C tools mod verify
+          go -C tools/actionlint mod tidy -diff
+          go -C tools/actionlint mod verify
 
       - name: Test tools module
         run: go -C tools test -count=1 ./...
@@ -46,15 +48,16 @@ jobs:
       - name: Check tool dependencies
         shell: bash
         run: |
-          metadata="$RUNNER_TEMP/tool-module.json"
-          tool_paths="$RUNNER_TEMP/tool-paths"
-          raw_tool_paths="$RUNNER_TEMP/tool-paths.raw"
-          module_paths="$RUNNER_TEMP/tool-module-paths"
-          normalised_module_paths="$RUNNER_TEMP/tool-module-paths.normalised"
-          raw_module_paths="$RUNNER_TEMP/tool-module-paths.raw"
-          report="$RUNNER_TEMP/tool-dependencies.json"
-          go -C tools mod edit -json >"$metadata"
-          python3 - "$metadata" >"$raw_tool_paths" <<'PY'
+          for owner in tools tools/actionlint; do
+            metadata="$RUNNER_TEMP/tool-module.json"
+            tool_paths="$RUNNER_TEMP/tool-paths"
+            raw_tool_paths="$RUNNER_TEMP/tool-paths.raw"
+            module_paths="$RUNNER_TEMP/tool-module-paths"
+            normalised_module_paths="$RUNNER_TEMP/tool-module-paths.normalised"
+            raw_module_paths="$RUNNER_TEMP/tool-module-paths.raw"
+            report="$RUNNER_TEMP/tool-dependencies.json"
+            go -C "$owner" mod edit -json >"$metadata"
+            python3 - "$metadata" >"$raw_tool_paths" <<'PY'
           import json, pathlib, sys
           value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
           tools = value.get("Tool") or []
@@ -63,22 +66,22 @@ jobs:
           for tool in tools:
               print(tool["Path"])
           PY
-          tr -d '\r' <"$raw_tool_paths" >"$tool_paths"
-          mapfile -t tools <"$tool_paths"
-          go -C tools list -deps -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}" >"$raw_module_paths"
-          tr -d '\r' <"$raw_module_paths" >"$normalised_module_paths"
-          sort -u "$normalised_module_paths" >"$module_paths"
-          mapfile -t modules <"$module_paths"
-          ((${#modules[@]} > 0 && ${#modules[@]} <= 4096))
-          go -C tools list -m -u -json "${modules[@]}" >"$report"
-          [[ -s "$report" && $(wc -c <"$report") -le $((4 * 1024 * 1024)) ]]
-          python3 - "$report" <<'PY'
+            tr -d '\r' <"$raw_tool_paths" >"$tool_paths"
+            mapfile -t tools <"$tool_paths"
+            go -C "$owner" list -deps -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}" >"$raw_module_paths"
+            tr -d '\r' <"$raw_module_paths" >"$normalised_module_paths"
+            sort -u "$normalised_module_paths" >"$module_paths"
+            mapfile -t modules <"$module_paths"
+            ((${#modules[@]} > 0 && ${#modules[@]} <= 4096))
+            go -C "$owner" list -m -u -json "${modules[@]}" >"$report"
+            [[ -s "$report" && $(wc -c <"$report") -le $((4 * 1024 * 1024)) ]]
+            python3 - "$report" "$owner" <<'PY'
           import json, pathlib, sys
           source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
           decoder = json.JSONDecoder()
-          exclusions = {
-              "go.yaml.in/yaml/v4": ("v4.0.0-rc.6", "Actionlint v1.7.12 requires the rc.3 parser API"),
-          }
+          exclusions = {}
+          if sys.argv[2] == "tools/actionlint":
+              exclusions["go.yaml.in/yaml/v4"] = ("v4.0.0-rc.6", "Actionlint v1.7.12 requires the rc.3 parser API")
           failures = []
           used = set()
           while source.lstrip():
@@ -102,6 +105,7 @@ jobs:
           if failures:
               raise SystemExit("\n".join(sorted(failures)))
           PY
+          done
 
       - name: Check workflows
         shell: bash
@@ -112,10 +116,15 @@ jobs:
           sort -z "$found" >"$inventory"
           mapfile -d '' -t workflows <"$inventory"
           ((${#workflows[@]} > 0 && ${#workflows[@]} <= 64))
-          go -C tools tool actionlint -color=false "${workflows[@]}"
+          actionlint=$(go -C tools/actionlint tool -n actionlint)
+          shellcheck=$(go -C tools/actionlint tool -n shellcheck)
+          "$actionlint" -shellcheck="$shellcheck" -color=false "${workflows[@]}"
 
       - name: Scan Actionlint dependencies
-        run: go -C tools tool govulncheck github.com/rhysd/actionlint/cmd/actionlint
+        shell: bash
+        run: |
+          govulncheck=$(go -C tools tool -n govulncheck)
+          (cd tools/actionlint && "$govulncheck" github.com/rhysd/actionlint/cmd/actionlint)
 
   codeql:
     name: CodeQL
