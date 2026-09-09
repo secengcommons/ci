@@ -68,22 +68,25 @@ jobs:
           PY
             tr -d '\r' <"$raw_tool_paths" >"$tool_paths"
             mapfile -t tools <"$tool_paths"
-            go -C "$owner" list -deps -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}" >"$raw_module_paths"
+            go -C "$owner" list -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}" >"$raw_module_paths"
+            python3 - "$metadata" >>"$raw_module_paths" <<'PY'
+          import json, pathlib, sys
+          value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          for requirement in value.get("Require") or []:
+              if not requirement.get("Indirect"):
+                  print(requirement["Path"])
+          PY
             tr -d '\r' <"$raw_module_paths" >"$normalised_module_paths"
             sort -u "$normalised_module_paths" >"$module_paths"
             mapfile -t modules <"$module_paths"
             ((${#modules[@]} > 0 && ${#modules[@]} <= 4096))
             go -C "$owner" list -m -u -json "${modules[@]}" >"$report"
             [[ -s "$report" && $(wc -c <"$report") -le $((4 * 1024 * 1024)) ]]
-            python3 - "$report" "$owner" <<'PY'
+            python3 - "$report" <<'PY'
           import json, pathlib, sys
           source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
           decoder = json.JSONDecoder()
-          exclusions = {}
-          if sys.argv[2] == "tools/actionlint":
-              exclusions["go.yaml.in/yaml/v4"] = ("v4.0.0-rc.6", "Actionlint v1.7.12 requires the rc.3 parser API")
           failures = []
-          used = set()
           while source.lstrip():
               source = source.lstrip()
               value, end = decoder.raw_decode(source)
@@ -94,14 +97,7 @@ jobs:
                   failures.append(f'{value["Path"]} {value.get("Version", "")} is retracted')
               update = value.get("Update")
               if update:
-                  excluded = exclusions.get(value["Path"])
-                  if excluded and update["Version"] == excluded[0]:
-                      used.add(value["Path"])
-                      print(f'exclude {value["Path"]} {update["Version"]}: {excluded[1]}')
-                      continue
                   failures.append(f'{value["Path"]} {value.get("Version", "")} -> {update["Version"]}')
-          for path in exclusions.keys() - used:
-              failures.append(f"unused dependency exclusion: {path}")
           if failures:
               raise SystemExit("\n".join(sorted(failures)))
           PY

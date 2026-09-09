@@ -95,6 +95,24 @@ func TestWorkflowsUseRepositoryVerifyTool(t *testing.T) {
 	}
 }
 
+func TestToolDependencyCheckOwnsDeclaredModules(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range [][]byte{
+		[]byte(`list -f '{{with .Module}}{{.Path}}{{end}}' "${tools[@]}"`),
+		[]byte(`if not requirement.get("Indirect"):`),
+	} {
+		if !bytes.Contains(source, required) {
+			t.Fatalf("tool dependency check does not contain %q", required)
+		}
+	}
+	if bytes.Contains(source, []byte("list -deps")) {
+		t.Fatal("tool dependency check includes transitive modules")
+	}
+}
+
 func checkWorkflow(t *testing.T, root *os.Root, path string) {
 	t.Helper()
 	file, err := root.Open(path)
