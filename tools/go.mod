@@ -8,11 +8,11 @@ tool (
 	golang.org/x/vuln/cmd/govulncheck
 )
 
-require github.com/secengcommons/verify v1.0.0-alpha4
+require github.com/secengcommons/verify v1.0.0-alpha5
 
 require (
 	github.com/secengcommons/cli v1.0.0 // indirect
-	github.com/secengcommons/proctree v1.0.0 // indirect
+	github.com/secengcommons/proctree v1.1.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
